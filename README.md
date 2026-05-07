@@ -40,7 +40,7 @@ A retail chain needs a **Sales Data Warehouse** consisting of **Customers**, **P
 
 - Handle files arriving in an **SFTP zone** with timestamp-based naming conventions.
 - Implement **incremental loading** — when a new file arrives, the previous file is archived.
-- Maintain **SFTP**, **Raw**, and **Processed** zones along with an **Archival** location.
+- Maintain **SFTP** zone along with an **Archival** location.
 - Apply **archival logic consistently** across all zones.
 - Support **SCD Type 2** for slowly changing customer dimensions.
 - **Validate end-to-end** that data is correctly loaded from source OLTP to the DWH.
@@ -56,7 +56,7 @@ A retail chain needs a **Sales Data Warehouse** consisting of **Customers**, **P
 | **Compute**       | Databricks (Spark-based notebooks)          |
 | **Language**      | Python (PySpark), SQL                       |
 | **Storage**       | S3 Bucket (`salessprintt9`)                 |
-| **Data Format**   | CSV (source), Delta/Parquet (warehouse)     |
+| **Data Format**   | CSV (source)                                |
 | **Orchestration** | Databricks Workflows (Jobs + Task Values)   |
 | **Database**      | `retail_dw` (Databricks managed database)   |
 
@@ -69,13 +69,13 @@ A retail chain needs a **Sales Data Warehouse** consisting of **Customers**, **P
 │                        S3 Bucket (salessprintt9)                 │
 │                                                                  │
 │  sftp/                                                           │
-│  ├── customers/   ← CSV files with timestamps                   │
+│  ├── customers/   ← CSV files with timestamps                    │
 │  ├── products/                                                   │
 │  ├── stores/                                                     │
 │  └── sales/                                                      │
 │                                                                  │
 │  archive/                                                        │
-│  ├── customers/   ← Older files moved here                      │
+│  ├── customers/   ← Older files moved here                       │
 │  ├── products/                                                   │
 │  ├── stores/                                                     │
 │  └── sales/                                                      │
@@ -111,11 +111,11 @@ A retail chain needs a **Sales Data Warehouse** consisting of **Customers**, **P
 
 The pipeline ingests **four CSV datasets** from the SFTP zone:
 
-| Entity      | Description                                                         |
-|-------------|---------------------------------------------------------------------|
-| **Customers** | Customer details — ID, Name, Email, City, Address, LastUpdated    |
-| **Products**  | Product catalog — ID, Name, Category, UnitPrice                   |
-| **Stores**    | Store locations — ID, StoreName, Region                           |
+| Entity      | Description                                                                             |
+|-------------|-----------------------------------------------------------------------------------------|
+| **Customers** | Customer details — ID, Name, Email, City, Address, LastUpdated                        |
+| **Products**  | Product catalog — ID, Name, Category, UnitPrice                                       |
+| **Stores**    | Store locations — ID, StoreName, Region                                               |
 | **Sales**     | Daily transactions — TransactionID, CustomerID, ProductID, StoreID, Quantity, TxnDate |
 
 ---
@@ -159,8 +159,6 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
 - `extract_timestamp(filename)` – Parses the 14-digit timestamp from a filename.
 - `get_latest_file(path)` – Returns the latest file and a list of old files to archive.
 
----
-
 ### Stage 1 – Bronze Ingestion (Raw)
 **File:** `01_bronze_ingestion.py`
 
@@ -176,12 +174,10 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
    - `bronze_stores`
    - `bronze_sales`
 
----
-
 ### Stage 2 – Silver Cleaning & Transformation
 **File:** `02_silver_Cleaned.sql`
 
-**Purpose:** Cleanses, deduplicates, type-casts, and validates raw data.
+**Purpose:** Cleanses the duplicates, type-casts, and validates raw data.
 
 **Transformations applied:**
 
@@ -203,8 +199,6 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
 - Referential integrity check — sales with `CustomerID` not present in the customers table
 - Row counts for each Silver table
 
----
-
 ### Stage 3 – Gold Modelling (Dimensional)
 **File:** `03_gold_modelling.py`
 
@@ -225,8 +219,7 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
 - `fact_sales` joins with the **latest active** customer record using a windowed subquery (`ROW_NUMBER() OVER (PARTITION BY CustomerID ORDER BY CustomerSK DESC)`).
 - `Amount` is a **derived measure** calculated as `Quantity × UnitPrice`.
 
----
-
+  
 ### Stage 4 – Incremental Customer SCD Type 2
 **File:** `04_incremental_customers_scd.py`
 
@@ -240,7 +233,6 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
    - **Changed customers** (detected in Step 1)
    - Assigns new surrogate keys starting from `MAX(CustomerSK) + 1`.
 
----
 
 ### Stage 5 – Incremental Sales Load
 **File:** `05_incremental_sales_load.py`
@@ -253,7 +245,6 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
 3. Filters out any `TransactionID` that **already exists** in `fact_sales` using `WHERE s.TransactionID NOT IN (SELECT TransactionID FROM fact_sales)`.
 4. Generates new surrogate keys starting from `MAX(SalesSK) + 1`.
 
----
 
 ### Stage 6 – Final Validations
 **File:** `06_validations.py`
@@ -264,27 +255,27 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
 1. **Duplicate TransactionID in fact_sales** — Ensures no duplicate transactions exist after incremental load.
 2. **Active record consistency in dim_customers** — Validates that all active records (`IsActive = 1`) have `EndDate = '9999-12-31'`. Any mismatch indicates an SCD processing error.
 
----
+----
 
 ## Data Model
 
 ### Dimension Tables
 
 #### dim_customers (SCD Type 2)
-| Column       | Type        | Description                          |
-|-------------|-------------|--------------------------------------|
-| CustomerSK  | INT         | Surrogate Key (auto-generated)       |
-| CustomerID  | INT         | Natural/Business Key                 |
-| CustomerName| STRING      | Cleaned customer name (InitCap)      |
-| Email       | STRING      | Cleaned email (lowercase)            |
-| City        | STRING      | Customer city                        |
-| Address     | STRING      | Customer address                     |
-| StartDate   | DATE        | Row effective start date             |
+| Column       | Type        | Description                                  |
+|-------------|-------------|-----------------------------------------------|
+| CustomerSK  | INT         | Surrogate Key (auto-generated)                |
+| CustomerID  | INT         | Natural/Business Key                          |
+| CustomerName| STRING      | Cleaned customer name (InitCap)               |
+| Email       | STRING      | Cleaned email (lowercase)                     |
+| City        | STRING      | Customer city                                 |
+| Address     | STRING      | Customer address                              |
+| StartDate   | DATE        | Row effective start date                      |
 | EndDate     | DATE        | Row effective end date (9999-12-31 if active) |
-| IsActive    | INT         | 1 = current record, 0 = expired     |
+| IsActive    | INT         | 1 = current record, 0 = expired               |
 
 #### dim_products
-| Column       | Type          | Description              |
+| Column       | Type          | Description             |
 |-------------|---------------|--------------------------|
 | ProductSK   | INT           | Surrogate Key            |
 | ProductID   | INT           | Natural Key              |
@@ -304,7 +295,7 @@ The **14-digit timestamp** embedded in each filename is extracted via regex (`r'
 ### Fact Table
 
 #### fact_sales
-| Column        | Type          | Description                           |
+| Column        | Type          | Description                          |
 |--------------|---------------|---------------------------------------|
 | SalesSK      | INT           | Surrogate Key                         |
 | TransactionID| INT           | Natural transaction identifier        |
@@ -330,6 +321,7 @@ The archival logic ensures that **only the latest file is retained** in each SFT
 | Failures in the archival process are detected and reported   | If no valid timestamped CSV files are found, an `Exception` is raised with a descriptive message |
 
 ---
+
 
 ## Data Quality & Validation Strategy
 
